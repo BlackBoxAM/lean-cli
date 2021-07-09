@@ -54,6 +54,8 @@ install_requires = [
     "lxml~=4.6.3",
     "maskpass==0.3.5",
     "getmac~=0.8.2",
+    "Flask~=2.0.1",
+    "waitress~=2.0.0",
     "setuptools",
     f"quantconnect-stubs{get_stubs_version_range()}"
 ]

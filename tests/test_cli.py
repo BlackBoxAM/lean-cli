@@ -24,7 +24,7 @@ from typing import List, Optional
 
 import pytest
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.util.http_client import HTTPClient
 from lean.components.util.logger import Logger
 

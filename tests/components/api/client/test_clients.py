@@ -21,16 +21,16 @@ from unittest import mock
 import pytest
 from responses import RequestsMock
 
-from lean.components.api.account_client import AccountClient
-from lean.components.api.api_client import APIClient
-from lean.components.api.backtest_client import BacktestClient
-from lean.components.api.compile_client import CompileClient
-from lean.components.api.data_client import DataClient
-from lean.components.api.file_client import FileClient
-from lean.components.api.live_client import LiveClient
-from lean.components.api.node_client import NodeClient
-from lean.components.api.organization_client import OrganizationClient
-from lean.components.api.project_client import ProjectClient
+from lean.components.api.client.account_client import AccountClient
+from lean.components.api.client.api_client import APIClient
+from lean.components.api.client.backtest_client import BacktestClient
+from lean.components.api.client.compile_client import CompileClient
+from lean.components.api.client.data_client import DataClient
+from lean.components.api.client.file_client import FileClient
+from lean.components.api.client.live_client import LiveClient
+from lean.components.api.client.node_client import NodeClient
+from lean.components.api.client.organization_client import OrganizationClient
+from lean.components.api.client.project_client import ProjectClient
 from lean.components.util.http_client import HTTPClient
 from lean.constants import API_BASE_URL
 from lean.models.api import QCCompileState, QCLanguage, QCParameter, QCProject

@@ -17,7 +17,7 @@ from typing import List, Tuple, Optional
 import click
 
 from lean.click import LeanCommand, ensure_options
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.util.logger import Logger
 from lean.container import container
 from lean.models.api import (QCEmailNotificationMethod, QCNode, QCNotificationMethod, QCSMSNotificationMethod,

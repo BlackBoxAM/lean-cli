@@ -14,7 +14,9 @@
 from dependency_injector.containers import DeclarativeContainer
 from dependency_injector.providers import Factory, Singleton
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
+from lean.components.api.server.account_server import AccountServer
+from lean.components.api.server.api_server import APIServer
 from lean.components.cloud.cloud_project_manager import CloudProjectManager
 from lean.components.cloud.cloud_runner import CloudRunner
 from lean.components.cloud.data_downloader import DataDownloader
@@ -72,16 +74,15 @@ class Container(DeclarativeContainer):
     pull_manager = Singleton(PullManager, logger, api_client, project_manager, project_config_manager)
     push_manager = Singleton(PushManager, logger, api_client, project_manager, project_config_manager)
     data_downloader = Singleton(DataDownloader, logger, api_client, lean_config_manager)
+    module_manager = Singleton(ModuleManager, logger, api_client, http_client)
     cloud_project_manager = Singleton(CloudProjectManager,
                                       api_client,
                                       project_config_manager,
                                       pull_manager,
                                       push_manager,
                                       path_manager)
-    module_manager = Singleton(ModuleManager, logger, api_client, http_client)
 
     docker_manager = Singleton(DockerManager, logger, temp_manager)
-
     lean_runner = Singleton(LeanRunner,
                             logger,
                             project_config_manager,
@@ -92,6 +93,9 @@ class Container(DeclarativeContainer):
                             xml_manager)
 
     update_manager = Singleton(UpdateManager, logger, http_client, cache_storage, docker_manager)
+
+    account_server = Singleton(AccountServer)
+    api_server = Singleton(APIServer, logger, account_server)
 
 
 container = Container()

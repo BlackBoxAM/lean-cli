@@ -16,7 +16,7 @@ from typing import Any, List
 
 import click
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.config.lean_config_manager import LeanConfigManager
 from lean.components.util.logger import Logger
 from lean.models.errors import RequestFailedError

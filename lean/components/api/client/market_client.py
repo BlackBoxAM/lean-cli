@@ -11,32 +11,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import List
 
-from lean.components.api.api_client import *
-from lean.models.api import QCAccount
+from lean.components.api.client.api_client import *
+from lean.models.api import QCDataset
 
 
-class AccountClient:
-    """The AccountClient class contains methods to interact with account/* API endpoints."""
+class MarketClient:
+    """The MarketClient class contains methods to interact with market/* API endpoints."""
 
     def __init__(self, api_client: 'APIClient') -> None:
-        """Creates a new AccountClient instance.
+        """Creates a new MarketClient instance.
 
         :param api_client: the APIClient instance to use when making requests
         """
         self._api = api_client
 
-    def get_organization(self, organization_id: Optional[str] = None) -> QCAccount:
-        """Returns the details of an organization.
+    def list_datasets(self) -> List[QCDataset]:
+        """Get all available datasets.
 
-        :param organization_id: the id of the organization or None to select the preferred organization
-        :return: the details of the organization
+        :return: all datasets on the data market
         """
-        parameters = {}
+        data = self._api.post("market/data/list")
 
-        if organization_id is not None:
-            parameters["organizationId"] = organization_id
-
-        data = self._api.post("account/read", parameters)
-        return QCAccount(**data)
+        return [QCDataset(**dataset) for dataset in data["list"]]

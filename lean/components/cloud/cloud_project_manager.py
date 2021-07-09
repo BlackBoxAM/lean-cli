@@ -13,7 +13,7 @@
 
 from pathlib import Path
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.cloud.pull_manager import PullManager
 from lean.components.cloud.push_manager import PushManager
 from lean.components.config.project_config_manager import ProjectConfigManager

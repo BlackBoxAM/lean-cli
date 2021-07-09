@@ -20,18 +20,18 @@ from urllib.parse import urljoin
 import requests
 
 import lean
-from lean.components.api.account_client import AccountClient
-from lean.components.api.backtest_client import BacktestClient
-from lean.components.api.compile_client import CompileClient
-from lean.components.api.data_client import DataClient
-from lean.components.api.file_client import FileClient
-from lean.components.api.live_client import LiveClient
-from lean.components.api.market_client import MarketClient
-from lean.components.api.module_client import ModuleClient
-from lean.components.api.node_client import NodeClient
-from lean.components.api.optimization_client import OptimizationClient
-from lean.components.api.organization_client import OrganizationClient
-from lean.components.api.project_client import ProjectClient
+from lean.components.api.client.account_client import AccountClient
+from lean.components.api.client.backtest_client import BacktestClient
+from lean.components.api.client.compile_client import CompileClient
+from lean.components.api.client.data_client import DataClient
+from lean.components.api.client.file_client import FileClient
+from lean.components.api.client.live_client import LiveClient
+from lean.components.api.client.market_client import MarketClient
+from lean.components.api.client.module_client import ModuleClient
+from lean.components.api.client.node_client import NodeClient
+from lean.components.api.client.optimization_client import OptimizationClient
+from lean.components.api.client.organization_client import OrganizationClient
+from lean.components.api.client.project_client import ProjectClient
 from lean.components.util.http_client import HTTPClient
 from lean.components.util.logger import Logger
 from lean.constants import API_BASE_URL

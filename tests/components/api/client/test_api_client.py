@@ -19,7 +19,7 @@ from unittest import mock
 import pytest
 from responses import RequestsMock
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.util.http_client import HTTPClient
 from lean.constants import API_BASE_URL
 from lean.models.errors import AuthenticationError, RequestFailedError

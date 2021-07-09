@@ -14,7 +14,7 @@
 from pathlib import Path
 from typing import Set, List, Dict
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.util.http_client import HTTPClient
 from lean.components.util.logger import Logger
 from lean.constants import MODULES_DIRECTORY

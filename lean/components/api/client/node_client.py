@@ -11,7 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from lean.components.api.api_client import *
+from lean.components.api.client.api_client import *
 from lean.models.api import QCNode, QCNodeList
 
 

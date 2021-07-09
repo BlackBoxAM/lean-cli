@@ -15,7 +15,7 @@ from typing import List
 
 import click
 
-from lean.components.api.api_client import APIClient
+from lean.components.api.client.api_client import APIClient
 from lean.components.util.logger import Logger
 from lean.components.util.task_manager import TaskManager
 from lean.models.api import QCBacktest, QCCompileState, QCCompileWithLogs, QCOptimization, QCProject

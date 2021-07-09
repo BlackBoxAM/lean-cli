@@ -13,7 +13,7 @@
 
 from typing import List, Optional
 
-from lean.components.api.api_client import *
+from lean.components.api.client.api_client import *
 from lean.models.api import QCCreatedProject, QCLanguage, QCProject
 
 
