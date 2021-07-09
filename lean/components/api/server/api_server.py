@@ -38,6 +38,8 @@ class APIServer:
         self._app.after_request(self._after_request)
         self._app.register_error_handler(Exception, self._error_handler)
 
+        self._app.add_url_rule("/authenticate", view_func=lambda: {}, methods=["GET"])
+
         account_server.register_routes(self._app)
 
     def start(self, port: int) -> None:

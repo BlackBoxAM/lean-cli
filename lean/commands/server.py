@@ -20,7 +20,7 @@ from lean.container import container
 
 
 @click.command(cls=LeanCommand, requires_lean_config=True, requires_docker=True)
-@click.option("--port", type=int, default=8080, help="The port to run the API server on (defaults to 8080)")
+@click.option("--port", type=int, default=5612, help="The port to run the API server on (defaults to 5612)")
 def server(port: int) -> None:
     """Starts a local API server."""
     try:

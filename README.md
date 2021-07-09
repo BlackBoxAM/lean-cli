@@ -81,6 +81,7 @@ A locally-focused workflow (local development, local execution) with the CLI may
 - [`lean optimize`](#lean-optimize)
 - [`lean report`](#lean-report)
 - [`lean research`](#lean-research)
+- [`lean server`](#lean-server)
 - [`lean whoami`](#lean-whoami)
 
 ### `lean backtest`
@@ -889,6 +890,24 @@ Options:
 ```
 
 _See code: [lean/commands/research.py](lean/commands/research.py)_
+
+### `lean server`
+
+Starts a local API server.
+
+```
+Usage: lean server [OPTIONS]
+
+  Starts a local API server.
+
+Options:
+  --port INTEGER      The port to run the API server on (defaults to 5612)
+  --lean-config FILE  The Lean configuration file that should be used (defaults to the nearest lean.json)
+  --verbose           Enable debug logging
+  --help              Show this message and exit.
+```
+
+_See code: [lean/commands/server.py](lean/commands/server.py)_
 
 ### `lean whoami`
 
