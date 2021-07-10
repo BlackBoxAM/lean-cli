@@ -12,8 +12,11 @@
 # limitations under the License.
 
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lean.models.api import QCFullOrganization, QCOrganizationCredit, QCOrganizationData, QCOrganizationMember
 
 # Due to the way the filesystem is mocked in unit tests, values should not be Path instances.
 
@@ -80,3 +83,15 @@ TRADING_TECHNOLOGIES_PRODUCT_ID = 64
 
 # The product id of the Atreyu module
 ATREYU_PRODUCT_ID = 65
+
+# The fake organization returned by the local API server when it needs to return organization details
+FAKE_ORGANIZATION = QCFullOrganization(
+    id=uuid.uuid4().hex,
+    name="Local Organization",
+    seats=1,
+    type="Institution",
+    credit=QCOrganizationCredit(movements=[], balance=100_000_000),
+    products=[],
+    data=QCOrganizationData(signedTime=None, current=False),
+    members=[QCOrganizationMember(id=123, name="You", isAdmin=True, email="you@example.com")]
+)

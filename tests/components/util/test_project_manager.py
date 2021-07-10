@@ -76,6 +76,32 @@ def test_find_algorithm_file_raises_error_when_no_algorithm_file_exists() -> Non
         project_manager.find_algorithm_file(Path.cwd() / "Empty Project")
 
 
+def test_find_project_by_id_returns_path_to_project() -> None:
+    create_fake_lean_cli_directory()
+
+    project_dir = Path.cwd() / "Python Project"
+
+    project_config_manager = ProjectConfigManager(XMLManager())
+    project_id = project_config_manager.get_local_id(project_dir)
+
+    project_manager = _create_project_manager()
+
+    assert project_manager.find_project_by_id(project_id) == project_dir
+
+
+def test_find_project_by_id_raises_error_when_no_project_with_given_id_exists() -> None:
+    create_fake_lean_cli_directory()
+
+    project_config_manager = ProjectConfigManager(XMLManager())
+    python_project_id = project_config_manager.get_local_id(Path.cwd() / "Python Project")
+    csharp_project_id = project_config_manager.get_local_id(Path.cwd() / "CSharp Project")
+
+    project_manager = _create_project_manager()
+
+    with pytest.raises(Exception):
+        project_manager.find_project_by_id(max(python_project_id, csharp_project_id) + 1)
+
+
 def test_get_files_to_sync_returns_all_source_files() -> None:
     project_path = Path.cwd() / "My Project"
     project_path.mkdir()

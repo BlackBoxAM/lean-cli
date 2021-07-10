@@ -99,10 +99,10 @@ def test_projects_crud() -> None:
     assert retrieved_project.projectId == created_project.projectId
 
     # Test the project's name can be updated
-    project_client.update(created_project.projectId, name="New Name")
+    project_client.update(created_project.projectId, name=f"{name} 2")
     retrieved_project = project_client.get(created_project.projectId)
 
-    assert retrieved_project.name == "New Name"
+    assert retrieved_project.name == f"{name} 2"
 
     # Test the project's description can be updated
     project_client.update(created_project.projectId, description="New description")

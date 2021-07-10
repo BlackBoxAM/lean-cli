@@ -11,9 +11,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from flask import Flask, request
+from flask import Flask, g
 from flask.typing import ResponseReturnValue
 
+from lean.constants import FAKE_ORGANIZATION
 from lean.models.api import QCAccount
 
 
@@ -25,11 +26,11 @@ class AccountServer:
 
         :param app: the Flask instance to register the routes on
         """
-        app.add_url_rule("/account/read", view_func=self._read, methods=["POST"])
+        app.add_url_rule("/account/read", view_func=self._account_read, methods=["GET", "POST"])
 
-    def _read(self) -> ResponseReturnValue:
-        organization_id = request.json.get("organizationId", None)
+    def _account_read(self) -> ResponseReturnValue:
+        organization_id = g.input.get("organizationId", None)
         if organization_id is None:
-            organization_id = "fake-organization-id"
+            organization_id = FAKE_ORGANIZATION.id
 
         return QCAccount(organizationId=organization_id, creditBalance=1000).dict(exclude_none=True)

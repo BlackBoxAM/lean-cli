@@ -13,34 +13,49 @@
 
 import json
 import traceback
+from datetime import datetime
+from typing import Any
 
 import waitress
-from flask import Flask, Response, request
+from flask import Flask, Response, request, g
+from flask.json import JSONEncoder
 from flask.typing import ResponseReturnValue
 
 from lean.components.api.server.account_server import AccountServer
+from lean.components.api.server.project_server import ProjectServer
 from lean.components.util.logger import Logger
+
+
+class APIJSONEncoder(JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return obj.replace(microsecond=0, tzinfo=None).isoformat().replace("T", " ")
+        return JSONEncoder.default(self, obj)
 
 
 class APIServer:
     """The APIServer class manages the local API server."""
 
-    def __init__(self, logger: Logger, account_server: AccountServer) -> None:
+    def __init__(self, logger: Logger, account_server: AccountServer, project_server: ProjectServer) -> None:
         """Creates a new APIServer instance.
 
         :param logger: the logger to print debug messages with
         :param account_server: the server serving the account/* endpoints
+        :param project_server: the server serving the projects/* endpoints
         """
         self._logger = logger
 
         self._app = Flask(__name__)
+        self._app.json_encoder = APIJSONEncoder
+
         self._app.before_request(self._before_request)
         self._app.after_request(self._after_request)
         self._app.register_error_handler(Exception, self._error_handler)
 
-        self._app.add_url_rule("/authenticate", view_func=lambda: {}, methods=["GET"])
+        self._app.add_url_rule("/authenticate", view_func=lambda: {}, methods=["GET", "POST"])
 
         account_server.register_routes(self._app)
+        project_server.register_routes(self._app)
 
     def start(self, port: int) -> None:
         """Starts the local API server.
@@ -57,6 +72,15 @@ class APIServer:
         body = f" with body:\n{body}" if body != "" else ""
 
         self._logger.debug(f"<-- {request.method} {request.url}{body}")
+
+        if request.is_json:
+            g.input = request.json
+        elif len(request.args) > 0:
+            g.input = request.args.to_dict()
+        elif len(request.form) > 0:
+            g.input = request.form.to_dict()
+        else:
+            g.input = {}
 
     def _after_request(self, response: Response) -> Response:
         for header in ["Access-Control-Allow-Origin", "Access-Control-Allow-Headers", "Access-Control-Allow-Methods"]:

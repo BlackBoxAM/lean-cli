@@ -26,6 +26,7 @@ import pkg_resources
 from lean.components.config.lean_config_manager import LeanConfigManager
 from lean.components.config.project_config_manager import ProjectConfigManager
 from lean.components.util.xml_manager import XMLManager
+from lean.constants import PROJECT_CONFIG_FILE_NAME
 from lean.models.api import QCLanguage, QCProject
 
 
@@ -64,22 +65,40 @@ class ProjectManager:
 
         raise ValueError("The specified project does not contain a main.py or Main.cs file")
 
+    def find_project_by_id(self, local_id: int) -> Path:
+        """Finds a project by its local id.
+
+        Raises an error if a project with the given local id cannot be found.
+
+        :param local_id: the local id of the project
+        :return: the path to the directory containing the project with the given local id
+        """
+        cli_root = self._lean_config_manager.get_cli_root_directory()
+        for project_dir in [p.parent for p in cli_root.rglob(PROJECT_CONFIG_FILE_NAME)]:
+            if self._project_config_manager.get_local_id(project_dir) == local_id:
+                return project_dir
+
+        raise RuntimeError(f"Project with local id '{local_id}' does not exist")
+
     def get_files_to_sync(self, project: Path) -> List[Path]:
         """Returns the paths of all the local files that need to be synchronized with the cloud.
 
         :param project: the path to a local project directory
         :return: the list of files in the given project directory that need to be synchronized with the cloud
         """
-        local_files = list(project.rglob("*.py")) + list(project.rglob("*.cs")) + list(project.rglob("*.ipynb"))
         files_to_sync = []
 
-        for local_file in local_files:
-            posix_path = local_file.as_posix()
-            if any(f"{part}/" in posix_path for part in
-                   ["bin", "obj", ".ipynb_checkpoints", "backtests", "live", "optimizations"]):
+        for obj in project.iterdir():
+            if obj.is_dir():
+                if obj.name in ["bin", "obj", ".ipynb_checkpoints", "backtests", "live", "optimizations"]:
+                    continue
+
+                files_to_sync.extend(self.get_files_to_sync(obj))
+
+            if obj.suffix not in [".py", ".cs", ".ipynb"]:
                 continue
 
-            files_to_sync.append(local_file)
+            files_to_sync.append(obj)
 
         return files_to_sync
 
