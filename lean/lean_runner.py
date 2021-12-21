@@ -1,0 +1,555 @@
+# QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
+# Lean CLI v1.0. Copyright 2021 QuantConnect Corporation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from lean.constants import DEFAULT_ENGINE_IMAGE, GUI_PRODUCT_INSTALL_ID
+from lean.container import container
+from lean.models.brokerages.local import all_local_brokerages, local_brokerage_data_feeds, all_local_data_feeds
+from lean.models.brokerages.local.atreyu import AtreyuBrokerage
+from lean.models.brokerages.local.binance import BinanceBrokerage, BinanceDataFeed
+from lean.models.brokerages.local.bitfinex import BitfinexBrokerage, BitfinexDataFeed
+from lean.models.brokerages.local.terminal_link import TerminalLinkBrokerage, TerminalLinkDataFeed
+from lean.models.brokerages.local.coinbase_pro import CoinbaseProBrokerage, CoinbaseProDataFeed
+from lean.models.brokerages.local.interactive_brokers import InteractiveBrokersBrokerage, InteractiveBrokersDataFeed
+from lean.models.brokerages.local.iqfeed import IQFeedDataFeed
+from lean.models.brokerages.local.oanda import OANDABrokerage, OANDADataFeed
+from lean.models.brokerages.local.paper_trading import PaperTradingBrokerage
+from lean.models.brokerages.local.tradier import TradierBrokerage, TradierDataFeed
+from lean.models.brokerages.local.trading_technologies import TradingTechnologiesBrokerage, TradingTechnologiesDataFeed
+from lean.models.brokerages.local.zerodha import ZerodhaBrokerage, ZerodhaDataFeed
+from lean.models.errors import MoreInfoError
+from lean.models.logger import Option
+
+# Brokerage -> required configuration properties
+_required_brokerage_properties = {
+    "InteractiveBrokersBrokerage": ["ib-account", "ib-user-name", "ib-password",
+                                    "ib-agent-description", "ib-trading-mode"],
+    "TradierBrokerage": ["tradier-use-sandbox", "tradier-account-id", "tradier-access-token"],
+    "OandaBrokerage": ["oanda-environment", "oanda-access-token", "oanda-account-id"],
+    "GDAXBrokerage": ["gdax-api-secret", "gdax-api-key", "gdax-passphrase"],
+    "BitfinexBrokerage": ["bitfinex-api-secret", "bitfinex-api-key"],
+    "BinanceBrokerage": ["binance-api-secret", "binance-api-key"],
+    "ZerodhaBrokerage": ["zerodha-access-token", "zerodha-api-key", "zerodha-product-type", "zerodha-trading-segment"],
+    "BloombergBrokerage": ["job-organization-id", "bloomberg-api-type", "bloomberg-environment",
+                           "bloomberg-server-host", "bloomberg-server-port", "bloomberg-emsx-broker"],
+    "AtreyuBrokerage": ["job-organization-id", "atreyu-host", "atreyu-req-port", "atreyu-sub-port",
+                        "atreyu-username", "atreyu-password",
+                        "atreyu-client-id", "atreyu-broker-mpid", "atreyu-locate-rqd"],
+    "TradingTechnologiesBrokerage": ["job-organization-id", "tt-user-name", "tt-session-password", "tt-account-name",
+                                     "tt-rest-app-key", "tt-rest-app-secret", "tt-rest-environment",
+                                     "tt-market-data-sender-comp-id", "tt-market-data-target-comp-id",
+                                     "tt-market-data-host", "tt-market-data-port",
+                                     "tt-order-routing-sender-comp-id", "tt-order-routing-target-comp-id",
+                                     "tt-order-routing-host", "tt-order-routing-port",
+                                     "tt-log-fix-messages"]
+}
+
+# Data queue handler -> required configuration properties
+_required_data_queue_handler_properties = {
+    "InteractiveBrokersBrokerage":
+        _required_brokerage_properties["InteractiveBrokersBrokerage"] + ["ib-enable-delayed-streaming-data"],
+    "TradierBrokerage": _required_brokerage_properties["TradierBrokerage"],
+    "OandaBrokerage": _required_brokerage_properties["OandaBrokerage"],
+    "GDAXDataQueueHandler": _required_brokerage_properties["GDAXBrokerage"],
+    "BitfinexBrokerage": _required_brokerage_properties["BitfinexBrokerage"],
+    "BinanceBrokerage": _required_brokerage_properties["BinanceBrokerage"],
+    "ZerodhaBrokerage": _required_brokerage_properties["ZerodhaBrokerage"] + ["zerodha-history-subscription"],
+    "BloombergBrokerage": _required_brokerage_properties["BloombergBrokerage"],
+    "TradingTechnologiesBrokerage": _required_brokerage_properties["TradingTechnologiesBrokerage"],
+    "QuantConnect.ToolBox.IQFeed.IQFeedDataQueueHandler": ["iqfeed-iqconnect", "iqfeed-productName", "iqfeed-version"]
+}
+
+_environment_skeleton = {
+    "live-mode": True,
+    "setup-handler": "QuantConnect.Lean.Engine.Setup.BrokerageSetupHandler",
+    "result-handler": "QuantConnect.Lean.Engine.Results.LiveTradingResultHandler",
+    "data-feed-handler": "QuantConnect.Lean.Engine.DataFeeds.LiveTradingDataFeed",
+    "real-time-handler": "QuantConnect.Lean.Engine.RealTime.LiveTradingRealTimeHandler"
+}
+
+
+def _raise_for_missing_properties(lean_config: Dict[str, Any], environment_name: str, lean_config_path: Path) -> None:
+    """Raises an error if any required properties are missing.
+
+    :param lean_config: the LEAN configuration that should be used
+    :param environment_name: the name of the environment
+    :param lean_config_path: the path to the LEAN configuration file
+    """
+    environment = lean_config["environments"][environment_name]
+    for key in ["live-mode-brokerage", "data-queue-handler"]:
+        if key not in environment:
+            raise MoreInfoError(f"The '{environment_name}' environment does not specify a {key}",
+                                "https://www.lean.io/docs/lean-cli/tutorials/live-trading/local-live-trading")
+
+    brokerage = environment["live-mode-brokerage"]
+    data_queue_handler = environment["data-queue-handler"]
+
+    brokerage_properties = _required_brokerage_properties.get(brokerage, [])
+    data_queue_handler_properties = _required_data_queue_handler_properties.get(data_queue_handler, [])
+
+    required_properties = brokerage_properties + data_queue_handler_properties
+    missing_properties = [p for p in required_properties if p not in lean_config or lean_config[p] == ""]
+    missing_properties = set(missing_properties)
+    if len(missing_properties) == 0:
+        return
+
+    properties_str = "properties" if len(missing_properties) > 1 else "property"
+    these_str = "these" if len(missing_properties) > 1 else "this"
+
+    missing_properties = "\n".join(f"- {p}" for p in missing_properties)
+
+    raise RuntimeError(f"""
+Please configure the following missing {properties_str} in {lean_config_path}:
+{missing_properties}
+Go to the following url for documentation on {these_str} {properties_str}:
+https://www.lean.io/docs/lean-cli/tutorials/live-trading/local-live-trading
+    """.strip())
+
+
+def _start_iqconnect_if_necessary(lean_config: Dict[str, Any], environment_name: str) -> None:
+    """Starts IQConnect if the given environment uses IQFeed as data queue handler.
+
+    :param lean_config: the LEAN configuration that should be used
+    :param environment_name: the name of the environment
+    """
+    environment = lean_config["environments"][environment_name]
+    if environment["data-queue-handler"] != "QuantConnect.ToolBox.IQFeed.IQFeedDataQueueHandler":
+        return
+
+    args = [lean_config["iqfeed-iqconnect"],
+            "-product", lean_config["iqfeed-productName"],
+            "-version", lean_config["iqfeed-version"]]
+
+    username = lean_config.get("iqfeed-username", "")
+    if username != "":
+        args.extend(["-login", username])
+
+    password = lean_config.get("iqfeed-password", "")
+    if password != "":
+        args.extend(["-password", password])
+
+    subprocess.Popen(args)
+
+    container.logger().info("Waiting 10 seconds for IQFeed to start")
+    time.sleep(10)
+
+
+def _configure_lean_config_interactively(lean_config: Dict[str, Any], environment_name: str) -> None:
+    """Interactively configures the Lean config to use.
+
+    Asks the user all questions required to set up the Lean config for local live trading.
+
+    :param lean_config: the base lean config to use
+    :param environment_name: the name of the environment to configure
+    """
+    logger = container.logger()
+
+    lean_config["environments"] = {
+        environment_name: _environment_skeleton
+    }
+
+    brokerage = logger.prompt_list("Select a brokerage", [
+        Option(id=brokerage, label=brokerage.get_name()) for brokerage in all_local_brokerages
+    ])
+
+    brokerage.build(lean_config, logger).configure(lean_config, environment_name)
+
+    data_feed = logger.prompt_list("Select a data feed", [
+        Option(id=data_feed, label=data_feed.get_name()) for data_feed in local_brokerage_data_feeds[brokerage]
+    ])
+
+    data_feed.build(lean_config, logger).configure(lean_config, environment_name)
+
+
+_cached_organizations = None
+
+
+def _get_organization_id(given_input: Optional[str], label: str) -> str:
+    """Converts the organization name or id given by the user to an organization id.
+
+    Shows an interactive wizard if no input is given.
+
+    Raises an error if the user is not a member of an organization with the given name or id.
+
+    :param given_input: the input given by the user
+    :param label: the name of the module the organization id is needed for
+    :return: the id of the organization given by the user
+    """
+    global _cached_organizations
+    if _cached_organizations is None:
+        api_client = container.api_client()
+        _cached_organizations = api_client.organizations.get_all()
+
+    if given_input is not None:
+        organization = next((o for o in _cached_organizations if o.id == given_input or o.name == given_input), None)
+        if organization is None:
+            raise RuntimeError(f"You are not a member of an organization with name or id '{given_input}'")
+    else:
+        logger = container.logger()
+        options = [Option(id=organization, label=organization.name) for organization in _cached_organizations]
+        organization = logger.prompt_list(f"Select the organization with the {label} module subscription", options)
+
+    return organization.id
+
+
+_cached_lean_config = None
+
+
+def _get_default_value(key: str) -> Optional[Any]:
+    """Returns the default value for an option based on the Lean config.
+
+    :param key: the name of the property in the Lean config that supplies the default value of an option
+    :return: the value of the property in the Lean config, or None if there is none
+    """
+    global _cached_lean_config
+    if _cached_lean_config is None:
+        _cached_lean_config = container.lean_config_manager().get_lean_config()
+
+    if key not in _cached_lean_config:
+        return None
+
+    value = _cached_lean_config[key]
+    if value == "":
+        return None
+
+    if key == "iqfeed-iqconnect" and not Path(value).is_file():
+        return None
+
+    return value
+
+
+def live(project: Path,
+         environment: Optional[str] = None,
+         output: Optional[Path] = None,
+         detach: bool = False,
+         gui: bool = False,
+         gui_organization: Optional[str] = lambda: _get_default_value("job-organization-id"),
+         brokerage: Optional[str] = "Paper Trading",
+         data_feed: Optional[str] = "Bitfinex",
+         ib_user_name: Optional[str]=lambda: _get_default_value("ib-user-name"),
+         ib_account: Optional[str]=lambda: _get_default_value("ib-account"),
+         ib_password: Optional[str]=lambda: _get_default_value("ib-password"),
+         ib_enable_delayed_streaming_data: Optional[bool]=lambda: _get_default_value("ib-enable-delayed-streaming-data"),
+         tradier_account_id: Optional[str]=lambda: _get_default_value("tradier-account-id"),
+         tradier_access_token: Optional[str]=lambda: _get_default_value("tradier-access-token"),
+         tradier_use_sandbox: Optional[bool]=lambda: _get_default_value("tradier-use-sandbox"),
+         oanda_account_id: Optional[str]=lambda: _get_default_value("oanda-account-id"),
+         oanda_access_token: Optional[str]=lambda: _get_default_value("oanda-access-token"),
+         oanda_environment: Optional[str]=lambda: _get_default_value("oanda-environment"),
+         bitfinex_api_key: Optional[str]=lambda: _get_default_value("bitfinex-api-key"),
+         bitfinex_api_secret: Optional[str]=lambda: _get_default_value("bitfinex-api-secret"),
+         gdax_api_key: Optional[str]=lambda: _get_default_value("gdax-api-key"),
+         gdax_api_secret: Optional[str]=lambda: _get_default_value("gdax-api-secret"),
+         gdax_passphrase: Optional[str]=lambda: _get_default_value("gdax-passphrase"),
+         gdax_use_sandbox: Optional[bool]=lambda: _get_default_value("gdax-use-sandbox"),
+         binance_api_key: Optional[str]=lambda: _get_default_value("binance-api-key"),
+         binance_api_secret: Optional[str]=lambda: _get_default_value("binance-api-secret"),
+         binance_use_testnet: Optional[bool]=lambda: _get_default_value("binance-use-testnet"),
+         zerodha_api_key: Optional[str]=lambda: _get_default_value("zerodha-api-key"),
+         zerodha_access_token: Optional[str]=lambda: _get_default_value("zerodha-access-token"),
+         zerodha_product_type: Optional[str]=lambda: _get_default_value("zerodha-product-type"),
+         zerodha_trading_segment: Optional[str]=lambda: _get_default_value("zerodha-trading-segment"),
+         zerodha_history_subscription: Optional[bool]=lambda: _get_default_value("zerodha-history-subscription"),
+         iqfeed_iqconnect: Optional[Path]=lambda: _get_default_value("iqfeed-iqconnect"),
+         iqfeed_username: Optional[str]=lambda: _get_default_value("iqfeed-username"),
+         iqfeed_password: Optional[str]=lambda: _get_default_value("iqfeed-password"),
+         iqfeed_product_name: Optional[str]=lambda: _get_default_value("iqfeed-productName"),
+         iqfeed_version: Optional[str]=lambda: _get_default_value("iqfeed-version"),
+         terminal_link_organization: Optional[str]=lambda: _get_default_value("job-organization-id"),
+         bloomberg_environment: Optional[str]=lambda: _get_default_value("bloomberg-environment"),
+         bloomberg_server_host: Optional[str]=lambda: _get_default_value("bloomberg-server-host"),
+         bloomberg_server_port: Optional[int]=lambda: _get_default_value("bloomberg-server-port"),
+         bloomberg_symbol_map_file: Optional[Path]=lambda: _get_default_value("bloomberg-symbol-map-file"),
+         bloomberg_emsx_broker: Optional[str]=lambda: _get_default_value("bloomberg-emsx-broker"),
+         bloomberg_emsx_user_time_zone: Optional[str]=lambda: _get_default_value("bloomberg-emsx-user-time-zone"),
+         bloomberg_emsx_account: Optional[str]=lambda: _get_default_value("bloomberg-emsx-account"),
+         bloomberg_emsx_strategy: Optional[str]=lambda: _get_default_value("bloomberg-emsx-strategy"),
+         bloomberg_emsx_notes: Optional[str]=lambda: _get_default_value("bloomberg-emsx-notes"),
+         bloomberg_emsx_handling: Optional[str]=lambda: _get_default_value("bloomberg-emsx-handling"),
+         bloomberg_allow_modification: Optional[bool]=lambda: _get_default_value("bloomberg-allow-modification"),
+         atreyu_organization: Optional[str]=lambda: _get_default_value("job-organization-id"),
+         atreyu_host: Optional[str]=lambda: _get_default_value("atreyu-host"),
+         atreyu_req_port: Optional[int]=lambda: _get_default_value("atreyu-req-port"),
+         atreyu_sub_port: Optional[int]=lambda: _get_default_value("atreyu-sub-port"),
+         atreyu_username: Optional[str]=lambda: _get_default_value("atreyu-username"),
+         atreyu_password: Optional[str]=lambda: _get_default_value("atreyu-password"),
+         atreyu_client_id: Optional[str]=lambda: _get_default_value("atreyu-client-id"),
+         atreyu_broker_mpid: Optional[str]=lambda: _get_default_value("atreyu-broker-mpid"),
+         atreyu_locate_rqd: Optional[str]=lambda: _get_default_value("atreyu-locate-rqd"),
+         tt_organization: Optional[str]=lambda: _get_default_value("job-organization-id"),
+         tt_user_name: Optional[str]=lambda: _get_default_value("tt-user-name"),
+         tt_session_password: Optional[str]=lambda: _get_default_value("tt-session-password"),
+         tt_account_name: Optional[str]=lambda: _get_default_value("tt-account-name"),
+         tt_rest_app_key: Optional[str]=lambda: _get_default_value("tt-rest-app-key"),
+         tt_rest_app_secret: Optional[str]=lambda: _get_default_value("tt-rest-app-secret"),
+         tt_rest_environment: Optional[str]=lambda: _get_default_value("tt-rest-environment"),
+         tt_market_data_sender_comp_id: Optional[str]=lambda: _get_default_value("tt-market-data-sender-comp-id"),
+         tt_market_data_target_comp_id: Optional[str]=lambda: _get_default_value("tt-market-data-target-comp-id"),
+         tt_market_data_host: Optional[str]=lambda: _get_default_value("tt-market-data-host"),
+         tt_market_data_port: Optional[str]=lambda: _get_default_value("tt-market-data-port"),
+         tt_order_routing_sender_comp_id: Optional[str]=lambda: _get_default_value("tt-order-routing-sender-comp-id"),
+         tt_order_routing_target_comp_id: Optional[str]=lambda: _get_default_value("tt-order-routing-target-comp-id"),
+         tt_order_routing_host: Optional[str]=lambda: _get_default_value("tt-order-routing-host"),
+         tt_order_routing_port: Optional[str]=lambda: _get_default_value("tt-order-routing-port"),
+         tt_log_fix_messages: Optional[bool]=lambda: _get_default_value("tt-log-fix-messages"),
+         release: bool=False,
+         image: Optional[str] = None,
+         update: bool=False) -> None:
+    """Start live trading a project locally using Docker.
+
+    \b
+    If PROJECT is a directory, the algorithm in the main.py or Main.cs file inside it will be executed.
+    If PROJECT is a file, the algorithm in the specified file will be executed.
+
+    By default an interactive wizard is shown letting you configure the brokerage and data feed to use.
+    If --environment, --brokerage or --data-feed are given the command runs in non-interactive mode.
+    In this mode the CLI does not prompt for input.
+
+    If --environment is given it must be the name of a live environment in the Lean configuration.
+
+    If --brokerage and --data-feed are given, the options specific to the given brokerage/data feed must also be given.
+    The Lean config is used as fallback when a brokerage/data feed-specific option hasn't been passed in.
+    If a required option is not given and cannot be found in the Lean config the command aborts.
+
+    By default the official LEAN engine image is used.
+    You can override this using the --image option.
+    Alternatively you can set the default engine image for all commands using `lean config set engine-image <image>`.
+    """
+    # Reset globals so we reload everything in between tests
+    global _cached_organizations
+    _cached_organizations = None
+    global _cached_lean_config
+    _cached_lean_config = None
+
+    project_manager = container.project_manager()
+    algorithm_file = project_manager.find_algorithm_file(Path(project))
+
+    if output is None:
+        output = algorithm_file.parent / "live" / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    if gui:
+        module_manager = container.module_manager()
+        module_manager.install_module(GUI_PRODUCT_INSTALL_ID, _get_organization_id(gui_organization, "local GUI"))
+
+        detach = True
+
+    lean_config_manager = container.lean_config_manager()
+
+    if environment is not None and (brokerage is not None or data_feed is not None):
+        raise RuntimeError("--environment and --brokerage + --data-feed are mutually exclusive")
+
+    if environment is not None:
+        environment_name = environment
+        lean_config = lean_config_manager.get_complete_lean_config(environment_name, algorithm_file, None)
+    elif brokerage is not None or data_feed is not None:
+
+        brokerage_configurer = None
+        data_feed_configurer = None
+
+        if brokerage == PaperTradingBrokerage.get_name():
+            brokerage_configurer = PaperTradingBrokerage()
+        elif brokerage == InteractiveBrokersBrokerage.get_name():
+            brokerage_configurer = InteractiveBrokersBrokerage(ib_user_name, ib_account, ib_password)
+        elif brokerage == TradierBrokerage.get_name():
+            brokerage_configurer = TradierBrokerage(tradier_account_id, tradier_access_token, tradier_use_sandbox)
+        elif brokerage == OANDABrokerage.get_name():
+            brokerage_configurer = OANDABrokerage(oanda_account_id, oanda_access_token, oanda_environment)
+        elif brokerage == BitfinexBrokerage.get_name():
+            brokerage_configurer = BitfinexBrokerage(bitfinex_api_key, bitfinex_api_secret)
+        elif brokerage == CoinbaseProBrokerage.get_name():
+            brokerage_configurer = CoinbaseProBrokerage(gdax_api_key,
+                                                        gdax_api_secret,
+                                                        gdax_passphrase,
+                                                        gdax_use_sandbox)
+        elif brokerage == BinanceBrokerage.get_name():
+            brokerage_configurer = BinanceBrokerage(binance_api_key, binance_api_secret, binance_use_testnet)
+        elif brokerage == ZerodhaBrokerage.get_name():
+            brokerage_configurer = ZerodhaBrokerage(zerodha_api_key,
+                                                    zerodha_access_token,
+                                                    zerodha_product_type,
+                                                    zerodha_trading_segment)
+        elif brokerage == TerminalLinkBrokerage.get_name():
+            brokerage_configurer = TerminalLinkBrokerage(_get_organization_id(terminal_link_organization, "Terminal Link"),
+                                                         bloomberg_environment,
+                                                         bloomberg_server_host,
+                                                         bloomberg_server_port,
+                                                         bloomberg_symbol_map_file,
+                                                         bloomberg_emsx_broker,
+                                                         bloomberg_emsx_user_time_zone,
+                                                         bloomberg_emsx_account,
+                                                         bloomberg_emsx_strategy,
+                                                         bloomberg_emsx_notes,
+                                                         bloomberg_emsx_handling,
+                                                         bloomberg_allow_modification)
+        elif brokerage == AtreyuBrokerage.get_name():
+            brokerage_configurer = AtreyuBrokerage(_get_organization_id(atreyu_organization, "Atreyu"),
+                                                   atreyu_host,
+                                                   atreyu_req_port,
+                                                   atreyu_sub_port,
+                                                   atreyu_username,
+                                                   atreyu_password,
+                                                   atreyu_client_id,
+                                                   atreyu_broker_mpid,
+                                                   atreyu_locate_rqd)
+        elif brokerage == TradingTechnologiesBrokerage.get_name():
+            brokerage_configurer = TradingTechnologiesBrokerage(_get_organization_id(tt_organization,
+                                                                                     "Trading Technologies"),
+                                                                tt_user_name,
+                                                                tt_session_password,
+                                                                tt_account_name,
+                                                                tt_rest_app_key,
+                                                                tt_rest_app_secret,
+                                                                tt_rest_environment,
+                                                                tt_market_data_sender_comp_id,
+                                                                tt_market_data_target_comp_id,
+                                                                tt_market_data_host,
+                                                                tt_market_data_port,
+                                                                tt_order_routing_sender_comp_id,
+                                                                tt_order_routing_target_comp_id,
+                                                                tt_order_routing_host,
+                                                                tt_order_routing_port,
+                                                                tt_log_fix_messages)
+
+        if data_feed == InteractiveBrokersDataFeed.get_name():
+            data_feed_configurer = InteractiveBrokersDataFeed(InteractiveBrokersBrokerage(ib_user_name,
+                                                                                          ib_account,
+                                                                                          ib_password),
+                                                              ib_enable_delayed_streaming_data)
+        elif data_feed == TradierDataFeed.get_name():
+            data_feed_configurer = TradierDataFeed(TradierBrokerage(tradier_account_id,
+                                                                    tradier_access_token,
+                                                                    tradier_use_sandbox))
+        elif data_feed == OANDADataFeed.get_name():
+            data_feed_configurer = OANDADataFeed(OANDABrokerage(oanda_account_id,
+                                                                oanda_access_token,
+                                                                oanda_environment))
+        elif data_feed == BitfinexDataFeed.get_name():
+            data_feed_configurer = BitfinexDataFeed(BitfinexBrokerage(bitfinex_api_key, bitfinex_api_secret))
+        elif data_feed == CoinbaseProDataFeed.get_name():
+            data_feed_configurer = CoinbaseProDataFeed(CoinbaseProBrokerage(gdax_api_key,
+                                                                            gdax_api_secret,
+                                                                            gdax_passphrase,
+                                                                            gdax_use_sandbox))
+        elif data_feed == BinanceDataFeed.get_name():
+            data_feed_configurer = BinanceDataFeed(BinanceBrokerage(binance_api_key,
+                                                                    binance_api_secret,
+                                                                    binance_use_testnet))
+        elif data_feed == ZerodhaDataFeed.get_name():
+            data_feed_configurer = ZerodhaDataFeed(ZerodhaBrokerage(zerodha_api_key,
+                                                                    zerodha_access_token,
+                                                                    zerodha_product_type,
+                                                                    zerodha_trading_segment),
+                                                   zerodha_history_subscription)
+        elif data_feed == TerminalLinkDataFeed.get_name():
+            data_feed_configurer = TerminalLinkDataFeed(TerminalLinkBrokerage(_get_organization_id(terminal_link_organization,
+                                                                                             "Terminal Link"),
+                                                                           bloomberg_environment,
+                                                                           bloomberg_server_host,
+                                                                           bloomberg_server_port,
+                                                                           bloomberg_symbol_map_file,
+                                                                           bloomberg_emsx_broker,
+                                                                           bloomberg_emsx_user_time_zone,
+                                                                           bloomberg_emsx_account,
+                                                                           bloomberg_emsx_strategy,
+                                                                           bloomberg_emsx_notes,
+                                                                           bloomberg_emsx_handling,
+                                                                           bloomberg_allow_modification))
+        elif data_feed == TradingTechnologiesDataFeed.get_name():
+            data_feed_configurer = TradingTechnologiesDataFeed(
+                TradingTechnologiesBrokerage(_get_organization_id(tt_organization, "Trading Technologies"),
+                                             tt_user_name,
+                                             tt_session_password,
+                                             tt_account_name,
+                                             tt_rest_app_key,
+                                             tt_rest_app_secret,
+                                             tt_rest_environment,
+                                             tt_market_data_sender_comp_id,
+                                             tt_market_data_target_comp_id,
+                                             tt_market_data_host,
+                                             tt_market_data_port,
+                                             tt_order_routing_sender_comp_id,
+                                             tt_order_routing_target_comp_id,
+                                             tt_order_routing_host,
+                                             tt_order_routing_port,
+                                             tt_log_fix_messages))
+        elif data_feed == IQFeedDataFeed.get_name():
+            data_feed_configurer = IQFeedDataFeed(iqfeed_iqconnect,
+                                                  iqfeed_username,
+                                                  iqfeed_password,
+                                                  iqfeed_product_name,
+                                                  iqfeed_version)
+
+        environment_name = "lean-cli"
+        lean_config = lean_config_manager.get_complete_lean_config(environment_name, algorithm_file, None)
+
+        lean_config["environments"] = {
+            environment_name: _environment_skeleton
+        }
+
+        brokerage_configurer.configure(lean_config, environment_name)
+        data_feed_configurer.configure(lean_config, environment_name)
+    else:
+        environment_name = "lean-cli"
+        lean_config = lean_config_manager.get_complete_lean_config(environment_name, algorithm_file, None)
+        _configure_lean_config_interactively(lean_config, environment_name)
+
+    if "environments" not in lean_config or environment_name not in lean_config["environments"]:
+        lean_config_path = lean_config_manager.get_lean_config_path()
+        raise MoreInfoError(f"{lean_config_path} does not contain an environment named '{environment_name}'",
+                            "https://www.lean.io/docs/lean-cli/tutorials/live-trading/local-live-trading")
+
+    if not lean_config["environments"][environment_name]["live-mode"]:
+        raise MoreInfoError(f"The '{environment_name}' is not a live trading environment (live-mode is set to false)",
+                            "https://www.lean.io/docs/lean-cli/tutorials/live-trading/local-live-trading")
+
+    _raise_for_missing_properties(lean_config, environment_name, lean_config_manager.get_lean_config_path())
+
+    project_config_manager = container.project_config_manager()
+    cli_config_manager = container.cli_config_manager()
+
+    project_config = project_config_manager.get_project_config(algorithm_file.parent)
+    engine_image = cli_config_manager.get_engine_image(image or project_config.get("engine-image", None))
+
+    container.update_manager().pull_docker_image_if_necessary(engine_image, update)
+
+    _start_iqconnect_if_necessary(lean_config, environment_name)
+
+    if not output.exists():
+        output.mkdir(parents=True)
+
+    output_config_manager = container.output_config_manager()
+    lean_config["algorithm-id"] = f"L-{output_config_manager.get_live_deployment_id(output)}"
+
+    if gui:
+        lean_config["lean-manager-type"] = "QuantConnect.GUI.GuiLeanManager"
+        output_config_manager.get_output_config(output).set("gui", True)
+
+    lean_runner = container.lean_runner()
+    lean_runner.run_lean(lean_config, environment_name, algorithm_file, output, engine_image, None, release, detach)
+
+    if gui:
+        logger = container.logger()
+        logger.info(f"You can monitor the status of the live deployment in the GUI")
+
+
+def main():
+    live(project = "MACDStrategy1", bitfinex_api_key = os.environ.get("BITFINEX_API_KEY"), bitfinex_api_secret = os.environ.get("BITFINEX_API_SECRET"))
+
+
+main()

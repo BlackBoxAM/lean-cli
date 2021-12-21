@@ -312,6 +312,9 @@ class LeanRunner:
         config_path = self._temp_manager.create_temporary_directory() / "config.json"
         with config_path.open("w+", encoding="utf-8") as file:
             file.write(json.dumps(lean_config, indent=4))
+        with open(os.path.expanduser('~') + "/Downloads/config.json", "w+", encoding="utf-8") as file:
+            print(lean_config)
+            file.write(json.dumps(lean_config, indent=4))
 
         # Mount the Lean config
         run_options["mounts"].append(Mount(target="/Lean/Launcher/bin/Debug/config.json",
